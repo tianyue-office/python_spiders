@@ -9,8 +9,9 @@ from lxml import etree
 
 class Zhongxin(object):
     """
-    中信信托信托信息爬虫CITIC Trust
+    中信信托信托信息多线程爬虫 CITIC Trust,Github协作
     """
+
     def __init__(self):
         self.url_list = [
             "https://trust.ecitic.com/CPZQ/index.jsp?columnid=92&columnName=房地产信托",
@@ -40,6 +41,7 @@ class Zhongxin(object):
         return response.content
 
     def get_detail_data(self):
+        """获取详情页数据"""
         while True:
             url_list = self.url_queue.get()
             for url in url_list:
@@ -48,18 +50,21 @@ class Zhongxin(object):
             self.url_queue.task_done()
 
     def get_detail_url_list(self, data):
+        """获取详情页url列表"""
         # print(len(data))
         # 创建element对象
         html = etree.HTML(data)
         # re匹配出帖子节点列表
+        node_list = html.xpath('//*[@id="cRight"]/div/div[4]/table/tr/td[1]/a')
 
-        node_list = re.findall(r'<a href="(/product/.*?.shtml)" target="_blank">.*?</a>', data.decode())
-        # print(node_list)
+        """node_list = re.findall(r'<a href="(/product/.*?.shtml)" target="_blank">.*?</a>', data.decode())"""
+
+        print("节点数", len(node_list))
 
         detail_url_list = []
 
         for node in node_list:
-            detail_url = "https://trust.ecitic.com/" + node
+            detail_url = "https://trust.ecitic.com/" + node.xpath('./@href')[0]
             # print(detail_url)
 
             detail_url_list.append(detail_url)
@@ -76,37 +81,51 @@ class Zhongxin(object):
         return next_url
 
     def parse_data(self):
+        """处理数据"""
         while True:
             data = self.detail_data_queue.get()
-            print("开始处理数据")
+            # print("开始处理数据")
             """
+            re方法
             <td width="411">(.*?)</span></td>.*?<td><span>(.*?)
     </span></td>.*?<td><span>(.*?)
     </span></td>.*?<td><span>(.*?)
     </span></td>.*?<tr class="odd">
-            """
+
             node_list = re.findall(
                 r'<td width="411"><span>(.*?)</span></td>.*?<td><span>(.*?)\r\n</span></td>.*?<td><span>(.*?)\r\n</span></td>.*?<td><span>(.*?)\r\n</span></td>.*?<tr class="odd">',
                 data.decode(), re.S)
+            """
+            # 获取节点列表
+            html = etree.HTML(data)
+            node_list = html.xpath('//*[@id="myMain"]/div[3]/div[1]/div[2]/table')
 
             data_list = []
             # 遍历节点列表，从没一个节点中抽取数据
-            for data in node_list:
+            for node in node_list:
                 temp = dict()
 
-                temp['title'] = data[0]
-                temp['scale'] = data[1]
-                temp['shouyi'] = re.sub(r"\r\n", "", data[2])
-                temp['time'] = data[3]
-
-                # print(temp)
-                data_list.append(temp)
+                try:
+                    # 标题
+                    temp['title'] = node.xpath('./tr[1]/td[2]/span/text()')[0]
+                    # 规模
+                    temp['scale'] = re.sub(r"\r\n", "", node.xpath('./tr[3]/td[2]/span/text()')[0])
+                    # 收益
+                    temp['shouyi'] = re.sub(r"\r\n", "", node.xpath('./tr[4]/td[2]/span/text()')[0])
+                    # 期限
+                    temp['time'] = re.sub(r"\r\n", "", node.xpath('./tr[5]/td[2]/span/text()')[0])
+                except:
+                    pass
+                else:
+                    # print(temp)
+                    data_list.append(temp)
             # print(data_list)
             # return data_list
             self.save_data_queue.put(data_list)
             self.detail_data_queue.task_done()
 
     def save_data(self):
+        """保存数据"""
         while True:
             data_list = self.save_data_queue.get()
             # print(data_list)
@@ -118,6 +137,7 @@ class Zhongxin(object):
             self.save_data_queue.task_done()
 
     def get_url(self):
+        """获取url"""
         for next_url in self.url_list:
             while True:
                 data = self.get_data(next_url)
@@ -146,21 +166,26 @@ class Zhongxin(object):
         # 创建一个存放线程任务的列表
         thread_task_list = list()
 
+        # 创建生成url的线程
         t_0 = threading.Thread(target=self.get_url)
         thread_task_list.append(t_0)
 
+        # 创建获取详情页信息的线程
         for i in range(10):
             t_1 = threading.Thread(target=self.get_detail_data)
             thread_task_list.append(t_1)
 
+        # 创建处理数据的线程
         for i in range(10):
             t_2 = threading.Thread(target=self.parse_data)
             thread_task_list.append(t_2)
 
+        # 创建保存数据的线程
         for i in range(10):
             t_3 = threading.Thread(target=self.save_data)
             thread_task_list.append(t_3)
 
+        # 启动线程
         for t in thread_task_list:
             # 守护线程
             t.setDaemon(True)
